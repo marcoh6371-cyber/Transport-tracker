@@ -70,11 +70,16 @@ const CheckCircle2 = (p) => <Icon {...p}><path d="M22 11.08V12a10 10 0 1 1-5.93-
 const ChevronLeft = (p) => <Icon {...p}><polyline points="15 18 9 12 15 6"/></Icon>;
 const ChevronRight = (p) => <Icon {...p}><polyline points="9 18 15 12 9 6"/></Icon>;
 const AlertCircle = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></Icon>;
+const Droplet = (p) => <Icon {...p}><path d="M12 2.69s-5.5 6.4-5.5 10.31a5.5 5.5 0 0 0 11 0C17.5 9.09 12 2.69 12 2.69Z"/></Icon>;
+const AlertTriangle = (p) => <Icon {...p}><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></Icon>;
 
 // ---------- Helpers ----------
 const VEHICLES_KEY = "vehicles";
 const LOADS_KEY = "loads";
+const DIESEL_KEY = "diesel";
+const EVENTS_KEY = "events";
 const SETTINGS_KEY = "settings";
+const EVENT_TYPES = ["Blown tyre", "Breakdown", "Accident", "Service / maintenance", "Fine / violation", "Other"];
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const thisMonth = () => new Date().toISOString().slice(0, 7);
@@ -94,12 +99,18 @@ function VehicleTracker() {
   const [loading, setLoading] = useState(true);
   const [vehicles, setVehicles] = useState([]);
   const [loads, setLoads] = useState([]);
+  const [diesel, setDiesel] = useState([]);
+  const [events, setEvents] = useState([]);
   const [currency, setCurrency] = useState("$");
   const [selectedMonth, setSelectedMonth] = useState(thisMonth());
   const [filterVehicle, setFilterVehicle] = useState("all");
+  const [filterDieselVehicle, setFilterDieselVehicle] = useState("all");
+  const [filterEventVehicle, setFilterEventVehicle] = useState("all");
   const [error, setError] = useState("");
   const [vehicleModal, setVehicleModal] = useState(null);
   const [loadModal, setLoadModal] = useState(null);
+  const [dieselModal, setDieselModal] = useState(null);
+  const [eventModal, setEventModal] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
 
   useEffect(() => {
@@ -108,6 +119,10 @@ function VehicleTracker() {
       catch (e) { setVehicles([]); }
       try { const l = await storage.get(LOADS_KEY); setLoads(l ? JSON.parse(l.value) : []); }
       catch (e) { setLoads([]); }
+      try { const d = await storage.get(DIESEL_KEY); setDiesel(d ? JSON.parse(d.value) : []); }
+      catch (e) { setDiesel([]); }
+      try { const ev = await storage.get(EVENTS_KEY); setEvents(ev ? JSON.parse(ev.value) : []); }
+      catch (e) { setEvents([]); }
       try { const s = await storage.get(SETTINGS_KEY); if (s) setCurrency(JSON.parse(s.value).currency || "$"); }
       catch (e) {}
       setLoading(false);
@@ -124,6 +139,16 @@ function VehicleTracker() {
     try { await storage.set(LOADS_KEY, JSON.stringify(next)); setError(""); }
     catch (e) { setError("Couldn't save the load. Try again."); }
   }
+  async function persistDiesel(next) {
+    setDiesel(next);
+    try { await storage.set(DIESEL_KEY, JSON.stringify(next)); setError(""); }
+    catch (e) { setError("Couldn't save the diesel entry. Try again."); }
+  }
+  async function persistEvents(next) {
+    setEvents(next);
+    try { await storage.set(EVENTS_KEY, JSON.stringify(next)); setError(""); }
+    catch (e) { setError("Couldn't save the event. Try again."); }
+  }
   async function persistCurrency(sym) {
     setCurrency(sym);
     try { await storage.set(SETTINGS_KEY, JSON.stringify({ currency: sym })); } catch (e) {}
@@ -137,6 +162,8 @@ function VehicleTracker() {
   function removeVehicle(id) {
     persistVehicles(vehicles.filter((v) => v.id !== id));
     persistLoads(loads.filter((l) => l.vehicleId !== id));
+    persistDiesel(diesel.filter((d) => d.vehicleId !== id));
+    persistEvents(events.filter((e) => e.vehicleId !== id));
     setConfirmDelete(null);
   }
   function saveLoad(data, id) {
@@ -148,10 +175,32 @@ function VehicleTracker() {
     persistLoads(loads.filter((l) => l.id !== id));
     setConfirmDelete(null);
   }
+  function saveDiesel(data, id) {
+    if (id) persistDiesel(diesel.map((d) => (d.id === id ? { ...d, ...data } : d)));
+    else persistDiesel([...diesel, { id: uid(), ...data }]);
+    setDieselModal(null);
+  }
+  function removeDiesel(id) {
+    persistDiesel(diesel.filter((d) => d.id !== id));
+    setConfirmDelete(null);
+  }
+  function saveEvent(data, id) {
+    if (id) persistEvents(events.map((e) => (e.id === id ? { ...e, ...data } : e)));
+    else persistEvents([...events, { id: uid(), ...data }]);
+    setEventModal(null);
+  }
+  function removeEvent(id) {
+    persistEvents(events.filter((e) => e.id !== id));
+    setConfirmDelete(null);
+  }
 
   const monthLoads = useMemo(
     () => loads.filter((l) => (l.date || "").slice(0, 7) === selectedMonth),
     [loads, selectedMonth]
+  );
+  const monthDiesel = useMemo(
+    () => diesel.filter((d) => (d.date || "").slice(0, 7) === selectedMonth),
+    [diesel, selectedMonth]
   );
   const statsFor = (vehicleId) => {
     const vl = monthLoads.filter((l) => l.vehicleId === vehicleId);
@@ -161,22 +210,43 @@ function VehicleTracker() {
       count: vl.length,
     };
   };
+  const dieselStatsFor = (vehicleId) => {
+    const vd = monthDiesel.filter((d) => d.vehicleId === vehicleId);
+    return {
+      litres: vd.reduce((s, d) => s + (Number(d.litres) || 0), 0),
+      cost: vd.reduce((s, d) => s + (Number(d.cost) || 0), 0),
+    };
+  };
   const fleetTotals = useMemo(() => {
     const revenue = monthLoads.reduce((s, l) => s + (Number(l.price) || 0), 0);
     const km = monthLoads.reduce((s, l) => s + (Number(l.km) || 0), 0);
+    const litres = monthDiesel.reduce((s, d) => s + (Number(d.litres) || 0), 0);
+    const dieselCost = monthDiesel.reduce((s, d) => s + (Number(d.cost) || 0), 0);
     const onTarget = vehicles.filter((v) => v.targetRevenue && statsFor(v.id).revenue >= v.targetRevenue).length;
-    return { revenue, km, count: monthLoads.length, onTarget };
-  }, [monthLoads, vehicles]);
+    return { revenue, km, litres, dieselCost, count: monthLoads.length, onTarget };
+  }, [monthLoads, monthDiesel, vehicles]);
 
   const fmtMoney = (n) => `${currency}${(Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
   const fmtKm = (n) => `${(Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} km`;
+  const fmtL = (n) => `${(Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 1 })} L`;
 
   const visibleLoads = useMemo(() => {
     const list = monthLoads.filter((l) => filterVehicle === "all" || l.vehicleId === filterVehicle);
     return [...list].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   }, [monthLoads, filterVehicle]);
 
+  const visibleDiesel = useMemo(() => {
+    const list = monthDiesel.filter((d) => filterDieselVehicle === "all" || d.vehicleId === filterDieselVehicle);
+    return [...list].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  }, [monthDiesel, filterDieselVehicle]);
+
+  const visibleEvents = useMemo(() => {
+    const list = events.filter((e) => filterEventVehicle === "all" || e.vehicleId === filterEventVehicle);
+    return [...list].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  }, [events, filterEventVehicle]);
+
   const vehicleName = (id) => vehicles.find((v) => v.id === id)?.name || "Unknown vehicle";
+  const vehiclePlate = (id) => vehicles.find((v) => v.id === id)?.plate || "";
 
   return (
     <div style={{ color: "#E8EAED", minHeight: "100vh" }} className="p-4">
@@ -191,8 +261,16 @@ function VehicleTracker() {
               <p style={{ fontSize: 12, color: "#8B94A0", margin: 0 }}>Loads, kilometres and revenue against monthly targets — running standalone, saved to this browser</p>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button className="ft-btn-outline" onClick={() => setVehicleModal("new")}><Plus size={16} /> Vehicle</button>
+            <button className="ft-btn-outline" onClick={() => vehicles.length && setDieselModal({ vehicleId: vehicles[0].id })}
+              disabled={!vehicles.length} style={!vehicles.length ? { opacity: 0.5, cursor: "not-allowed" } : {}}>
+              <Droplet size={16} /> Log diesel
+            </button>
+            <button className="ft-btn-outline" onClick={() => vehicles.length && setEventModal({ vehicleId: vehicles[0].id })}
+              disabled={!vehicles.length} style={!vehicles.length ? { opacity: 0.5, cursor: "not-allowed" } : {}}>
+              <AlertTriangle size={16} /> Log event
+            </button>
             <button className="ft-btn-accent" onClick={() => vehicles.length && setLoadModal({ vehicleId: vehicles[0].id })}
               disabled={!vehicles.length} style={!vehicles.length ? { opacity: 0.5, cursor: "not-allowed" } : {}}>
               <Plus size={16} /> Log load
@@ -224,6 +302,7 @@ function VehicleTracker() {
             <StatChip icon={<Wallet size={16} />} label="Revenue" value={fmtMoney(fleetTotals.revenue)} />
             <StatChip icon={<Gauge size={16} />} label="Kilometres" value={fmtKm(fleetTotals.km)} />
             <StatChip icon={<Package size={16} />} label="Loads" value={fleetTotals.count} />
+            <StatChip icon={<Droplet size={16} />} label="Diesel" value={`${fmtL(fleetTotals.litres)} · ${fmtMoney(fleetTotals.dieselCost)}`} />
             <StatChip icon={<CheckCircle2 size={16} />} label="On target" value={`${fleetTotals.onTarget} / ${vehicles.length}`} />
           </div>
         </div>
@@ -241,6 +320,8 @@ function VehicleTracker() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16, marginBottom: 24 }}>
             {vehicles.map((v) => {
               const s = statsFor(v.id);
+              const ds = dieselStatsFor(v.id);
+              const eventCount = events.filter((e) => e.vehicleId === v.id).length;
               return (
                 <div key={v.id} className="ft-card" style={{ padding: 16 }}>
                   <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 12 }}>
@@ -255,9 +336,22 @@ function VehicleTracker() {
                   </div>
                   <RouteBar label="Revenue" value={s.revenue} target={v.targetRevenue} format={fmtMoney} onSetTarget={() => setVehicleModal(v)} />
                   <RouteBar label="Kilometres" value={s.km} target={v.targetKm} format={fmtKm} onSetTarget={() => setVehicleModal(v)} />
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12, paddingTop: 12, borderTop: "1px solid #333B44" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12, color: "#8B94A0", marginBottom: 4 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Droplet size={12} /> Diesel this month</span>
+                    <span className="font-mono">{fmtL(ds.litres)} · {fmtMoney(ds.cost)}</span>
+                  </div>
+                  {eventCount > 0 && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: "#F2A93B", marginBottom: 4 }}>
+                      <AlertTriangle size={12} /> {eventCount} event{eventCount === 1 ? "" : "s"} logged
+                    </div>
+                  )}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12, paddingTop: 12, borderTop: "1px solid #333B44", flexWrap: "wrap", gap: 8 }}>
                     <span style={{ fontSize: 12, color: "#8B94A0" }}>{s.count} load{s.count === 1 ? "" : "s"}{v.targetLoads ? ` / ${v.targetLoads} target` : ""}</span>
-                    <button className="ft-btn-outline" style={{ fontSize: 12, padding: "6px 10px" }} onClick={() => setLoadModal({ vehicleId: v.id })}><Plus size={13} /> Log load</button>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button className="ft-btn-outline" style={{ fontSize: 12, padding: "6px 10px" }} onClick={() => setDieselModal({ vehicleId: v.id })}><Droplet size={13} /></button>
+                      <button className="ft-btn-outline" style={{ fontSize: 12, padding: "6px 10px" }} onClick={() => setEventModal({ vehicleId: v.id })}><AlertTriangle size={13} /></button>
+                      <button className="ft-btn-outline" style={{ fontSize: 12, padding: "6px 10px" }} onClick={() => setLoadModal({ vehicleId: v.id })}><Plus size={13} /> Log load</button>
+                    </div>
                   </div>
                 </div>
               );
@@ -310,19 +404,124 @@ function VehicleTracker() {
           </div>
         )}
 
+        {vehicles.length > 0 && (
+          <div className="ft-card" style={{ padding: 16, marginTop: 24 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+              <p className="font-display" style={{ fontSize: 16, textTransform: "uppercase", margin: 0, display: "flex", alignItems: "center", gap: 8 }}><Droplet size={16} color="#F2A93B" /> Diesel this month</p>
+              <select className="ft-input font-mono" style={{ width: "auto" }} value={filterDieselVehicle} onChange={(e) => setFilterDieselVehicle(e.target.value)}>
+                <option value="all">All vehicles</option>
+                {vehicles.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+              </select>
+            </div>
+            {visibleDiesel.length === 0 ? (
+              <p style={{ fontSize: 14, color: "#8B94A0", textAlign: "center", padding: "24px 0" }}>No diesel logged yet this month.</p>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", fontSize: 14, borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ color: "#8B94A0", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      <th style={{ textAlign: "left", paddingBottom: 8 }}>Date</th>
+                      <th style={{ textAlign: "left", paddingBottom: 8 }}>Vehicle</th>
+                      <th style={{ textAlign: "right", paddingBottom: 8 }}>Litres</th>
+                      <th style={{ textAlign: "right", paddingBottom: 8 }}>Cost</th>
+                      <th style={{ textAlign: "right", paddingBottom: 8 }}>Odometer</th>
+                      <th style={{ textAlign: "left", paddingBottom: 8 }}>Note</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleDiesel.map((d) => (
+                      <tr key={d.id} style={{ borderTop: "1px solid #333B44" }}>
+                        <td className="font-mono" style={{ padding: "8px 0", whiteSpace: "nowrap" }}>{new Date(d.date).toLocaleDateString(undefined, { day: "numeric", month: "short" })}</td>
+                        <td style={{ padding: "8px 0" }}>{vehicleName(d.vehicleId)}</td>
+                        <td className="font-mono" style={{ padding: "8px 0", textAlign: "right" }}>{fmtL(d.litres)}</td>
+                        <td className="font-mono" style={{ padding: "8px 0", textAlign: "right" }}>{fmtMoney(d.cost)}</td>
+                        <td className="font-mono" style={{ padding: "8px 0", textAlign: "right" }}>{d.odometer ? d.odometer.toLocaleString() : "—"}</td>
+                        <td style={{ padding: "8px 0", color: "#8B94A0" }}>{d.note || "—"}</td>
+                        <td style={{ padding: "8px 0", textAlign: "right" }}>
+                          <button className="ft-btn-outline" style={{ padding: 5 }} onClick={() => setDieselModal(d)}><Pencil size={12} /></button>{" "}
+                          <button className="ft-btn-outline" style={{ padding: 5, borderColor: "#E8734A", color: "#E8734A" }} onClick={() => setConfirmDelete({ type: "diesel", id: d.id })}><Trash2 size={12} /></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {vehicles.length > 0 && (
+          <div className="ft-card" style={{ padding: 16, marginTop: 24 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+              <p className="font-display" style={{ fontSize: 16, textTransform: "uppercase", margin: 0, display: "flex", alignItems: "center", gap: 8 }}><AlertTriangle size={16} color="#F2A93B" /> Vehicle event log</p>
+              <select className="ft-input font-mono" style={{ width: "auto" }} value={filterEventVehicle} onChange={(e) => setFilterEventVehicle(e.target.value)}>
+                <option value="all">All vehicles</option>
+                {vehicles.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+              </select>
+            </div>
+            <p style={{ fontSize: 12, color: "#8B94A0", margin: "-4px 0 12px" }}>Full history, all months — breakdowns, tyres, accidents, services and more.</p>
+            {visibleEvents.length === 0 ? (
+              <p style={{ fontSize: 14, color: "#8B94A0", textAlign: "center", padding: "24px 0" }}>No events logged yet.</p>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", fontSize: 14, borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ color: "#8B94A0", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      <th style={{ textAlign: "left", paddingBottom: 8 }}>Date</th>
+                      <th style={{ textAlign: "left", paddingBottom: 8 }}>Registration</th>
+                      <th style={{ textAlign: "left", paddingBottom: 8 }}>Vehicle</th>
+                      <th style={{ textAlign: "left", paddingBottom: 8 }}>Event</th>
+                      <th style={{ textAlign: "left", paddingBottom: 8 }}>Note</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleEvents.map((ev) => (
+                      <tr key={ev.id} style={{ borderTop: "1px solid #333B44" }}>
+                        <td className="font-mono" style={{ padding: "8px 0", whiteSpace: "nowrap" }}>{new Date(ev.date).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</td>
+                        <td className="font-mono" style={{ padding: "8px 0" }}>{vehiclePlate(ev.vehicleId) || "—"}</td>
+                        <td style={{ padding: "8px 0" }}>{vehicleName(ev.vehicleId)}</td>
+                        <td style={{ padding: "8px 0" }}>
+                          <span style={{ background: "rgba(242,169,59,0.12)", color: "#F2A93B", borderRadius: 999, padding: "2px 8px", fontSize: 12 }}>{ev.type}</span>
+                        </td>
+                        <td style={{ padding: "8px 0", color: "#8B94A0" }}>{ev.note || "—"}</td>
+                        <td style={{ padding: "8px 0", textAlign: "right" }}>
+                          <button className="ft-btn-outline" style={{ padding: 5 }} onClick={() => setEventModal(ev)}><Pencil size={12} /></button>{" "}
+                          <button className="ft-btn-outline" style={{ padding: 5, borderColor: "#E8734A", color: "#E8734A" }} onClick={() => setConfirmDelete({ type: "event", id: ev.id })}><Trash2 size={12} /></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
         {vehicleModal && <VehicleModal initial={vehicleModal === "new" ? null : vehicleModal} onClose={() => setVehicleModal(null)} onSave={saveVehicle} />}
         {loadModal && <LoadModal initial={loadModal.id ? loadModal : null} defaultVehicleId={loadModal.vehicleId} vehicles={vehicles} onClose={() => setLoadModal(null)} onSave={saveLoad} />}
+        {dieselModal && <DieselModal initial={dieselModal.id ? dieselModal : null} defaultVehicleId={dieselModal.vehicleId} vehicles={vehicles} onClose={() => setDieselModal(null)} onSave={saveDiesel} />}
+        {eventModal && <EventModal initial={eventModal.id ? eventModal : null} defaultVehicleId={eventModal.vehicleId} vehicles={vehicles} onClose={() => setEventModal(null)} onSave={saveEvent} />}
 
         {confirmDelete && (
           <div style={{ position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, background: "rgba(0,0,0,0.6)", zIndex: 50 }}>
             <div className="ft-card" style={{ padding: 20, maxWidth: 360, width: "100%" }}>
               <p style={{ fontSize: 14, marginBottom: 16 }}>
-                {confirmDelete.type === "vehicle" ? `Remove ${confirmDelete.name} and its logged loads for every month? This can't be undone.` : "Remove this load? This can't be undone."}
+                {confirmDelete.type === "vehicle" && `Remove ${confirmDelete.name} and its logged loads, diesel and events for every month? This can't be undone.`}
+                {confirmDelete.type === "load" && "Remove this load? This can't be undone."}
+                {confirmDelete.type === "diesel" && "Remove this diesel entry? This can't be undone."}
+                {confirmDelete.type === "event" && "Remove this event? This can't be undone."}
               </p>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
                 <button className="ft-btn-outline" onClick={() => setConfirmDelete(null)}>Cancel</button>
                 <button style={{ background: "#E8734A", color: "#1A1305", fontWeight: 600, borderRadius: 8, padding: "8px 12px", border: "none", cursor: "pointer" }}
-                  onClick={() => (confirmDelete.type === "vehicle" ? removeVehicle(confirmDelete.id) : removeLoad(confirmDelete.id))}>
+                  onClick={() => {
+                    if (confirmDelete.type === "vehicle") removeVehicle(confirmDelete.id);
+                    else if (confirmDelete.type === "load") removeLoad(confirmDelete.id);
+                    else if (confirmDelete.type === "diesel") removeDiesel(confirmDelete.id);
+                    else if (confirmDelete.type === "event") removeEvent(confirmDelete.id);
+                  }}>
                   Delete
                 </button>
               </div>
@@ -480,6 +679,112 @@ function LoadModal({ initial, defaultVehicleId, vehicles, onClose, onSave }) {
         </div>
         {formError && <p style={{ fontSize: 12, color: "#E8734A", margin: 0 }}>{formError}</p>}
         <button type="submit" className="ft-btn-accent" style={{ justifyContent: "center", marginTop: 8 }}>{initial ? "Save changes" : "Log load"}</button>
+      </form>
+    </Modal>
+  );
+}
+
+function DieselModal({ initial, defaultVehicleId, vehicles, onClose, onSave }) {
+  const [vehicleId, setVehicleId] = useState(initial?.vehicleId || defaultVehicleId || vehicles[0]?.id || "");
+  const [date, setDate] = useState(initial?.date || today());
+  const [litres, setLitres] = useState(initial?.litres ?? "");
+  const [cost, setCost] = useState(initial?.cost ?? "");
+  const [odometer, setOdometer] = useState(initial?.odometer ?? "");
+  const [note, setNote] = useState(initial?.note || "");
+  const [formError, setFormError] = useState("");
+
+  function submit(e) {
+    e.preventDefault();
+    if (!vehicleId) return setFormError("Choose a vehicle.");
+    if (!date) return setFormError("Choose a date.");
+    if (litres === "" || isNaN(Number(litres))) return setFormError("Enter the litres filled.");
+    if (cost === "" || isNaN(Number(cost))) return setFormError("Enter the cost of this fill-up.");
+    setFormError("");
+    onSave({ vehicleId, date, litres: Number(litres), cost: Number(cost), odometer: num(odometer), note: note.trim() }, initial?.id);
+  }
+
+  return (
+    <Modal title={initial ? "Edit diesel entry" : "Log diesel"} onClose={onClose}>
+      <form onSubmit={submit} noValidate style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div>
+          <label className="ft-label">Vehicle *</label>
+          <select className="ft-input" value={vehicleId} onChange={(e) => setVehicleId(e.target.value)}>
+            {vehicles.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="ft-label">Date used *</label>
+          <input className="ft-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div>
+            <label className="ft-label">Litres *</label>
+            <input className="ft-input font-mono" type="number" min="0" step="0.01" value={litres} onChange={(e) => setLitres(e.target.value)} />
+          </div>
+          <div>
+            <label className="ft-label">Total cost *</label>
+            <input className="ft-input font-mono" type="number" min="0" step="0.01" value={cost} onChange={(e) => setCost(e.target.value)} />
+          </div>
+        </div>
+        <div>
+          <label className="ft-label">Odometer reading</label>
+          <input className="ft-input font-mono" type="number" min="0" value={odometer} onChange={(e) => setOdometer(e.target.value)} placeholder="Optional" />
+        </div>
+        <div>
+          <label className="ft-label">Note</label>
+          <input className="ft-input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Station, fuel card — optional" />
+        </div>
+        {formError && <p style={{ fontSize: 12, color: "#E8734A", margin: 0 }}>{formError}</p>}
+        <button type="submit" className="ft-btn-accent" style={{ justifyContent: "center", marginTop: 8 }}>{initial ? "Save changes" : "Log diesel"}</button>
+      </form>
+    </Modal>
+  );
+}
+
+function EventModal({ initial, defaultVehicleId, vehicles, onClose, onSave }) {
+  const [vehicleId, setVehicleId] = useState(initial?.vehicleId || defaultVehicleId || vehicles[0]?.id || "");
+  const [date, setDate] = useState(initial?.date || today());
+  const [type, setType] = useState(initial?.type || EVENT_TYPES[0]);
+  const [note, setNote] = useState(initial?.note || "");
+  const [formError, setFormError] = useState("");
+
+  function submit(e) {
+    e.preventDefault();
+    if (!vehicleId) return setFormError("Choose a vehicle.");
+    if (!date) return setFormError("Choose a date.");
+    if (!type) return setFormError("Choose an event type.");
+    setFormError("");
+    onSave({ vehicleId, date, type, note: note.trim() }, initial?.id);
+  }
+
+  const selected = vehicles.find((v) => v.id === vehicleId);
+
+  return (
+    <Modal title={initial ? "Edit event" : "Log an event"} onClose={onClose}>
+      <form onSubmit={submit} noValidate style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div>
+          <label className="ft-label">Vehicle *</label>
+          <select className="ft-input" value={vehicleId} onChange={(e) => setVehicleId(e.target.value)}>
+            {vehicles.map((v) => <option key={v.id} value={v.id}>{v.name}{v.plate ? ` — ${v.plate}` : ""}</option>)}
+          </select>
+          {selected?.plate && <p className="font-mono" style={{ fontSize: 11, color: "#8B94A0", margin: "4px 0 0" }}>Registration: {selected.plate}</p>}
+        </div>
+        <div>
+          <label className="ft-label">Date occurred *</label>
+          <input className="ft-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        </div>
+        <div>
+          <label className="ft-label">Event type *</label>
+          <select className="ft-input" value={type} onChange={(e) => setType(e.target.value)}>
+            {EVENT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="ft-label">Details</label>
+          <input className="ft-input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="What happened, location, action taken — optional" />
+        </div>
+        {formError && <p style={{ fontSize: 12, color: "#E8734A", margin: 0 }}>{formError}</p>}
+        <button type="submit" className="ft-btn-accent" style={{ justifyContent: "center", marginTop: 8 }}>{initial ? "Save changes" : "Log event"}</button>
       </form>
     </Modal>
   );
